@@ -2,23 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>3D Gas Pipeline Visualization with Excel</title>
+<title>3D Gas Pipeline Diagram</title>
 <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
 <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <style>
     html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
     #cesiumContainer { width: 100%; height: 90%; }
-    #upload { width: 100%; height: 10%; padding: 10px; background: #f0f0f0; }
+    #upload { width: 100%; height: 10%; padding: 10px; background: #f0f0f0; font-size: 16px; }
 </style>
 </head>
 <body>
 
-<input type="file" id="upload" />
+<input type="file" id="upload" accept=".xlsx, .xls" />
 <div id="cesiumContainer"></div>
 
 <script>
-    // Инициализация Cesium
     const viewer = new Cesium.Viewer('cesiumContainer', {
         terrainProvider: Cesium.createWorldTerrain()
     });
@@ -35,42 +34,45 @@
             const sheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[sheetName];
             const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-            plotPipeline(jsonData);
+            plotPipelineDiagram(jsonData);
         };
 
         reader.readAsArrayBuffer(file);
     });
 
-    function plotPipeline(pipelineData) {
+    function plotPipelineDiagram(data) {
         viewer.entities.removeAll();
 
-        // Находим min и max для нормализации
-        const minGradient = Math.min(...pipelineData.map(p => p.Gradient));
-        const maxGradient = Math.max(...pipelineData.map(p => p.Gradient));
-        const minPotential = Math.min(...pipelineData.map(p => p.Potential));
-        const maxPotential = Math.max(...pipelineData.map(p => p.Potential));
+        // Нормализация для потенциала и градиента
+        const minPotential = Math.min(...data.map(p => p.Potential));
+        const maxPotential = Math.max(...data.map(p => p.Potential));
+        const minGradient = Math.min(...data.map(p => p.Gradient));
+        const maxGradient = Math.max(...data.map(p => p.Gradient));
 
         function getColor(gradient) {
             const t = (gradient - minGradient) / (maxGradient - minGradient);
             return Cesium.Color.BLUE.lerp(Cesium.Color.RED, t, new Cesium.Color());
         }
 
-        // Линия газопровода
-        const positions = pipelineData.map(p => Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, 0));
+        // Строим линию газопровода
+        const positions = data.map(p => Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, 0));
         viewer.entities.add({
             name: "Gas Pipeline",
             polyline: { positions: positions, width: 5, material: Cesium.Color.YELLOW }
         });
 
-        // Цилиндры и подписи
-        pipelineData.forEach(p => {
+        // Строим диаграмму вдоль газопровода
+        data.forEach(p => {
             const height = 20 + 80 * (p.Potential - minPotential) / (maxPotential - minPotential);
+
+            // Цилиндр = диаграмма
             viewer.entities.add({
                 position: Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, 0),
-                cylinder: { length: height, topRadius: 5, bottomRadius: 5, material: getColor(p.Gradient) }
+                cylinder: { length: height, topRadius: 5, bottomRadius: 5, material: getColor(p.Gradient) },
+                description: `<b>Potential:</b> ${p.Potential}<br><b>Gradient:</b> ${p.Gradient}`
             });
 
+            // Подпись с потенциалом
             viewer.entities.add({
                 position: Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, height + 5),
                 label: {
@@ -88,8 +90,10 @@
         viewer.zoomTo(viewer.entities);
     }
 </script>
+
 </body>
 </html>
+
 
 
 
