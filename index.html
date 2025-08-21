@@ -1,5 +1,4 @@
 <!doctype html>
-
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -109,9 +108,9 @@
     }
     function numberOr(v){const n=Number(String(v).replace(',','.'));return isFinite(n)?n:null;}
     function popupTable(obj){
-      return <table style="border-collapse:collapse;width:100%;">${
-        Object.entries(obj).map(([k,v])=><tr><td>${k}</td><td style="text-align:right;font-weight:600;">${v??''}</td></tr>).join('')
-      }</table>;
+      return `<table style="border-collapse:collapse;width:100%;">${
+        Object.entries(obj).map(([k,v])=>`<tr><td>${k}</td><td style="text-align:right;font-weight:600;">${v??''}</td></tr>`).join('')
+      }</table>`;
     }
     function isKIPStatus(val){if(val==null)return false;const s=String(val).trim();return s&&s!=='-'&&s!=='нет';}
 
@@ -158,19 +157,19 @@
       const scale=+document.getElementById('scale').value||0.8;
       points.forEach(p=>{
         if(p.u_on||p.u_off){
-          const icon=makeDonutIcon({'U вкл, В':p.u_on⠟⠵⠺⠞⠵⠺⠞⠟⠞⠞⠞⠞⠞⠺⠺⠟⠵⠵⠵⠵0},scaledSize(base,scale,p.u_on||p.u_off));
+          const icon=makeDonutIcon({'U вкл, В':p.u_on||0,'U отк, В':p.u_off||0},scaledSize(base,scale,p.u_on||p.u_off));
           L.marker([p.lat,p.lon],{icon}).addTo(layerPotential)
-            .bindPopup(<b>Потенциал</b><br/>Км:${p.km??''}<br/>${popupTable({'U вкл, В':p.u_on,'U отк, В':p.u_off})});
+            .bindPopup(`<b>Потенциал</b><br/>Км:${p.km??''}<br/>${popupTable({'U вкл, В':p.u_on,'U отк, В':p.u_off})}`);
         }
         if(p.gl_on||p.gr_on){
-          const icon=makeBarIcon({'Левый, mB':p.gl_on⠺⠺⠞⠞⠞⠞⠟⠺⠵⠺⠵⠵⠟⠺⠞⠵⠺⠵⠺⠺⠵⠺0},scaledSize(base,scale,(p.gl_on⠺⠞⠺⠵⠵⠟⠞⠺⠟⠞⠵0)));
+          const icon=makeBarIcon({'Левый, mB':p.gl_on||0,'Правый, mB':p.gr_on||0},scaledSize(base,scale,(p.gl_on||0)+(p.gr_on||0)));
           L.marker([p.lat,p.lon],{icon}).addTo(layerGradients)
-            .bindPopup(<b>Градиенты</b><br/>Км:${p.km??''}<br/>${popupTable({'Левый':p.gl_on,'Правый':p.gr_on})});
+            .bindPopup(`<b>Градиенты</b><br/>Км:${p.km??''}<br/>${popupTable({'Левый':p.gl_on,'Правый':p.gr_on})}`);
         }
         if(isKIPStatus(p.kip)){
           const kipIcon=L.divIcon({html:'<div style="background:#DC3912;color:#fff;padding:4px 6px;border-radius:8px;font-weight:700;">КИП</div>'});
           L.marker([p.lat,p.lon],{icon:kipIcon}).addTo(layerKIP)
-            .bindPopup(<b>КИП</b><br/>Км:${p.km??''}<br/>Состояние:${p.kip});
+            .bindPopup(`<b>КИП</b><br/>Км:${p.km??''}<br/>Состояние:${p.kip}`);
         }
       });
       map.fitBounds(latlngs);
@@ -204,6 +203,8 @@
   </script>
 </body>
 </html>
+
+
 
 
 
