@@ -1,0 +1,329 @@
+<!doctype html>
+
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Карта рельефа с диаграммами (Excel → Leaflet)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root { --bg:#0b0c10; --panel:#15171c; --text:#e6e6e6; --muted:#9aa0a6; --accent:#4f46e5; }
+    html, body { height:100%; margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
+    .app { display:grid; grid-template-columns: 380px 1fr; height:100%; }
+    .sidebar { background:var(--panel); padding:16px; overflow:auto; box-shadow: 4px 0 24px rgba(0,0,0,.3); }
+    .sidebar h1 { font-size:20px; margin:0 0 12px; }
+    .sidebar .hint { color:var(--muted); font-size:12px; margin-bottom:12px; }
+    .control { margin-bottom:14px; }
+    .control label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+    input[type="file"], input[type="number"], select { width:100%; box-sizing:border-box; background:#0f1115; color:var(--text); border:1px solid #2a2f3a; border-radius:12px; padding:10px 12px; outline:none; }
+    .row { display:flex; gap:8px; }
+    button { background:#2b7dfa; border:none; color:white; padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600; }
+    button.secondary { background:#1f242d; color:#d9e2ff; border:1px solid #2a2f3a; }
+    #map { height:100%; }
+    .section { padding:10px; border:1px solid #2a2f3a; border-radius:14px; background:#0f1115; }
+    .legend { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .legend .item { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+    .legend .dot { width:10px; height:10px; border-radius:50%; }
+    .footer { font-size:11px; color:var(--muted); margin-top:10px; }
+    .divider { height:1px; background:#22262f; margin:12px 0; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <h1>Excel → карта рельефа с диаграммами</h1>
+      <div class="hint">Загрузите ваш Excel-файл. Приложение распознает столбцы: <b>Координаты</b>, <b>U вкл., В</b>, <b>U отк., В</b>, <b>Градиент (левый) G вкл./откл</b>, <b>Градиент (правый) G вкл./откл</b>, <b>Км по трассе МГ</b>, <b>Техническое состояние КИП</b>.</div><div class="control section">
+    <label for="fileInput">Excel (.xlsx)</label>
+    <input id="fileInput" type="file" accept=".xlsx,.xls" />
+    <div class="row" style="margin-top:8px;">
+      <button id="loadBtn">Загрузить</button>
+      <button id="fitBtn" class="secondary">Подогнать карту</button>
+    </div>
+  </div>
+
+  <div class="control section">
+    <label>Слои и вид</label>
+    <div class="row">
+      <button id="togglePotential" class="secondary">Потенциалы</button>
+      <button id="toggleGradients" class="secondary">Градиенты</button>
+      <button id="toggleKIP" class="secondary">КИП</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <label style="flex:1;">Размер значков (px)<br/><input id="baseSize" type="number" value="40" min="12" max="128"/></label>
+      <label style="flex:1;">Масштаб по величине<br/><input id="scale" type="number" step="0.1" value="0.8"/></label>
+    </div>
+  </div>
+
+  <div class="control section">
+    <label for="basemap">Подложка</label>
+    <select id="basemap">
+      <option value="opentopo">OpenTopoMap (рельеф)</option>
+      <option value="esri">Esri WorldTopoMap</option>
+      <option value="osm">OpenStreetMap</option>
+    </select>
+  </div>
+
+  <div class="footer">Подсказка: линия газопровода строится по возрастанию поля «Км по трассе МГ». Если значения отсутствуют — по порядку строк.</div>
+</aside>
+<main id="map"></main>
+
+  </div>  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>  <script>
+// ====== БАЗОВАЯ КАРТА ======
+    const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([60.0, 70.0], 5);
+
+    const tileLayers = {
+      'opentopo': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '&copy; OpenTopoMap & OpenStreetMap' }),
+      'esri': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' }),
+      'osm': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' })
+    };
+    tileLayers.opentopo.addTo(map);
+
+    document.getElementById('basemap').addEventListener('change', (e)=>{
+      Object.values(tileLayers).forEach(t => map.removeLayer(t));
+      (tileLayers[e.target.value] || tileLayers.opentopo).addTo(map);
+    });
+
+    // Слои для объектов
+    const layerPotential = L.layerGroup().addTo(map);
+    const layerGradients = L.layerGroup().addTo(map);
+    const layerKIP = L.layerGroup().addTo(map);
+    const layerPipeline = L.layerGroup().addTo(map);
+
+    // ====== УТИЛИТЫ ======
+    function parseCoord(raw){
+      if(raw == null) return null;
+      let s = String(raw).trim();
+      if(!s) return null;
+      // Пример: "N 65,321000240*E073,228656248*" или "65.321, 73.228"
+      s = s.replace(/,/g, '.');
+      // Если строка похожа на "lat lon"
+      const simple = s.match(/(-?\d+\.\d+)\D+(-?\d+\.\d+)/);
+      if(simple){ return [parseFloat(simple[1]), parseFloat(simple[2])]; }
+      // Формат с N/E/S/W
+      const m = s.match(/([NS])\s*(\d+(?:\.\d+)?)\D*([EW])\s*(\d+(?:\.\d+)?)/i);
+      if(m){
+        let lat = parseFloat(m[2]);
+        let lon = parseFloat(m[4]);
+        if(m[1].toUpperCase()==='S') lat = -lat;
+        if(m[3].toUpperCase()==='W') lon = -lon;
+        return [lat, lon];
+      }
+      // Формат N65.321*E073.228*
+      const m2 = s.match(/[NS]?\s*(\d+(?:\.\d+)?)\D+[EW]?\s*(\d+(?:\.\d+)?)/i);
+      if(m2){ return [parseFloat(m2[1]), parseFloat(m2[2])]; }
+      return null;
+    }
+
+    function numberOr(val){ const n = Number(String(val).replace(',', '.')); return isFinite(n) ? n : null; }
+    function sumValues(obj){ return Object.values(obj).reduce((a,b)=>a + (Number(b)||0), 0); }
+
+    function makeBarIcon(values, size){
+      // values: {label:value,...}
+      const labels = Object.keys(values);
+      const data = labels.map(k => Number(values[k])||0);
+      const canvas = document.createElement('canvas');
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = size * dpr; canvas.height = size * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+
+      new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [{ data, backgroundColor: labels.map((_,i)=>defaultPalette[i%defaultPalette.length]) }] },
+        options: { indexAxis: 'y', responsive:false, animation:false, plugins:{ legend:{ display:false }, tooltip:{ enabled:false } }, scales:{ x:{ display:false }, y:{ display:false } } }
+      });
+
+      // Рамка
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,.6)';
+      ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, size-3, size-3); ctx.restore();
+
+      return L.icon({ iconUrl: canvas.toDataURL(), iconSize:[size,size], iconAnchor:[size/2,size/2] });
+    }
+
+    function makeDonutIcon(values, size){
+      const labels = Object.keys(values);
+      const data = labels.map(k => Number(values[k])||0);
+      const canvas = document.createElement('canvas');
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = size * dpr; canvas.height = size * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data, borderWidth:0, backgroundColor: labels.map((_,i)=>defaultPalette[i%defaultPalette.length]) }] },
+options: { cutout: '55%', responsive:false, animation:false, plugins:{ legend:{ display:false }, tooltip:{ enabled:false } } }
+      });
+      ctx.save(); ctx.beginPath(); ctx.arc(size/2,size/2,size/2-1.5,0,Math.PI*2); ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=3; ctx.stroke(); ctx.restore();
+      return L.icon({ iconUrl: canvas.toDataURL(), iconSize:[size,size], iconAnchor:[size/2,size/2] });
+    }
+
+    const defaultPalette = ['#3366CC','#DC3912','#FF9900','#109618','#990099','#0099C6','#DD4477','#66AA00','#B82E2E','#316395'];
+
+    function scaledSize(base, scale, magnitude){
+      const mag = Math.abs(magnitude||0);
+      return Math.max(18, Math.round(base + scale * Math.sqrt(mag)));
+    }
+
+    function popupTable(obj){
+      const rows = Object.entries(obj).map(([k,v])=><tr><td>${k}</td><td style="text-align:right;font-weight:600;">${v ?? ''}</td></tr>).join('');
+      return <table style="border-collapse:collapse;width:100%;">${rows}</table>;
+    }
+
+    function isKIPStatus(val){ if(val==null) return false; const s=String(val).trim(); return s && s!=='-' && s!=='нет'; }
+
+    // ====== ПАРСИНГ EXCEL ======
+    async function readExcel(file){
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+
+      // Обнаружение служебной строки с заголовками внутри таблицы (строка с "G вкл., mB")
+      const hasGradientHeaderRow = raw.length>0 && (
+        Object.values(raw[0]).some(v => String(v).toLowerCase().includes('g вкл')) ||
+        Object.values(raw[0]).some(v => String(v).toLowerCase().includes('g отк'))
+      );
+      const rows = hasGradientHeaderRow ? raw.slice(1) : raw;
+
+      // Нормализация ключей
+      const normKey = (k)=> String(k||'').trim().replace(/\s+/g,' ').replace(/[.,]+/g, m=>m).toLowerCase();
+
+      // Найдём нужные поля
+      // Возможные имена:
+      // U  вкл., В | U отк., В
+      // Градиент (левый) | Unnamed: 7  (для откл)
+      // Градиент (правый) | Unnamed: 9 (для откл)
+      // Координаты
+      // Км по трассе МГ
+      // Техническое состояние КИП
+
+      const colMap = { latlon: null, km: null, u_on: null, u_off: null, gl_on: null, gl_off: null, gr_on: null, gr_off: null, kip: null };
+
+      // Пройдёмся по ключам первой строки
+      const keys = Object.keys(rows[0]||{});
+      for(const key of keys){
+        const nk = normKey(key);
+        if(nk.includes('координат')) colMap.latlon = key;
+        else if(nk.startsWith('u') && nk.includes('вкл')) colMap.u_on = key;
+        else if(nk.startsWith('u') && (nk.includes('отк')||nk.includes('откл'))) colMap.u_off = key;
+        else if(nk.includes('градиент') && nk.includes('лев')) colMap.gl_on = key; // вкл под этим столбцом
+        else if(nk.includes('unnamed') && (nk.endsWith('7')||nk.includes('лев'))) colMap.gl_off = key;
+        else if(nk.includes('градиент') && nk.includes('прав')) colMap.gr_on = key;
+        else if(nk.includes('unnamed') && (nk.endsWith('9')||nk.includes('прав'))) colMap.gr_off = key;
+        else if(nk.includes('км по трассе')) colMap.km = key;
+        else if(nk.includes('кип')) colMap.kip = key;
+      }
+
+      const parsed = [];
+      for(const r of rows){
+        const coord = parseCoord(r[colMap.latlon]);
+        if(!coord) continue; // пропускаем без координат
+        const item = {
+          lat: coord[0], lon: coord[1],
+          km: numberOr(r[colMap.km]),
+          u_on: numberOr(r[colMap.u_on]),
+          u_off: numberOr(r[colMap.u_off]),
+          gl_on: numberOr(r[colMap.gl_on]),
+          gl_off: numberOr(r[colMap.gl_off]),
+          gr_on: numberOr(r[colMap.gr_on]),
+          gr_off: numberOr(r[colMap.gr_off]),
+          kip: r[colMap.kip]
+        };
+        parsed.push(item);
+      }
+
+      return parsed;
+    }
+
+    // ====== ОТРИСОВКА ======
+    function renderAll(points){
+      layerPotential.clearLayers();
+      layerGradients.clearLayers();
+      layerKIP.clearLayers();
+      layerPipeline.clearLayers();
+if(!points.length){ alert('Нет валидных точек с координатами'); return; }
+
+      // Линия трассы (сортировка по км)
+      const ptsForLine = points.filter(p=>p.km!=null).sort((a,b)=>a.km-b.km);
+      const line = ptsForLine.length ? ptsForLine : points;
+      const latlngs = line.map(p=>[p.lat,p.lon]);
+      L.polyline(latlngs, { color:'#66AA00', weight:3, opacity:0.9 }).addTo(layerPipeline);
+
+      const base = Number(document.getElementById('baseSize').value)||40;
+      const mult = Number(document.getElementById('scale').value)||0.8;
+
+      const bounds = [];
+      points.forEach(p=>{
+        // Потенциалы (донат)
+        const hasU = p.u_on!=null || p.u_off!=null;
+        if(hasU){
+          const size = scaledSize(base, mult, Math.max(Math.abs(p.u_on0)));
+          const icon = makeDonutIcon({ 'U вкл, В': p.u_on ?? 0, 'U отк, В': p.u_off ?? 0 }, size);
+          const m = L.marker([p.lat,p.lon], { icon }).addTo(layerPotential);
+          const html = <b>Потенциал</b><br/>Км: ${p.km ?? ''}<br/><br/>${popupTable({'U вкл, В':p.u_on,'U отк, В':p.u_off})};
+          m.bindPopup(html);
+        }
+
+        // Градиенты (горизонтальные столбики)
+        const hasG = [p.gl_on,p.gl_off,p.gr_on,p.gr_off].some(v=>v!=null);
+        if(hasG){
+          const sumG = sumValues({L_вкл:p.gl_on0,R_вкл:p.gr_on0});
+          const size = scaledSize(base, mult, sumG);
+          const icon = makeBarIcon({ 'L вкл, mB': p.gl_on0, 'R вкл, mB': p.gr_on0 }, size);
+          const m = L.marker([p.lat,p.lon], { icon }).addTo(layerGradients);
+          const html = <b>Градиенты</b><br/>Км: ${p.km ?? ''}<br/><br/>${popupTable({'Левый вкл, mB':p.gl_on,'Левый отк, mB':p.gl_off,'Правый вкл, mB':p.gr_on,'Правый отк, mB':p.gr_off})};
+          m.bindPopup(html);
+        }
+
+        // КИП
+        if(isKIPStatus(p.kip)){
+          const kipIcon = L.divIcon({ className:'kip-icon', html:'<div style="background:#DC3912;color:#fff;padding:4px 6px;border-radius:8px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.4);">КИП</div>', iconSize:[30,20], iconAnchor:[15,10] });
+          const m = L.marker([p.lat,p.lon], { icon: kipIcon }).addTo(layerKIP);
+          const html = <b>КИП</b><br/>Км: ${p.km ?? ''}<br/>Состояние: ${p.kip};
+          m.bindPopup(html);
+        }
+        bounds.push([p.lat,p.lon]);
+      });
+
+      if(bounds.length){ map.fitBounds(bounds, { padding:[24,24] }); }
+    }
+
+    // ====== UI ======
+    let currentPoints = [];
+    document.getElementById('loadBtn').addEventListener('click', async ()=>{
+      const file = document.getElementById('fileInput').files[0];
+      if(!file){ alert('Выберите Excel-файл (.xlsx)'); return; }
+      try{
+        const points = await readExcel(file);
+        currentPoints = points;
+        renderAll(points);
+      }catch(e){
+        console.error(e); alert('Ошибка загрузки: '+e.message);
+      }
+    });
+
+    document.getElementById('fitBtn').addEventListener('click', ()=>{
+      const layers = [];
+      ;[layerPotential, layerGradients, layerKIP, layerPipeline].forEach(g=>g.eachLayer(l=>{
+        if(l.getLatLng) layers.push(l.getLatLng());
+        if(l.getLatLngs) layers.push(...l.getLatLngs());
+      }));
+      if(layers.length){ map.fitBounds(L.latLngBounds(layers), { padding:[24,24] }); }
+    });
+
+    function toggleLayer(btnId, layer){
+      const btn = document.getElementById(btnId);
+      let visible = true;
+      btn.addEventListener('click', ()=>{
+        if(visible){ map.removeLayer(layer); btn.classList.remove('secondary'); btn.style.background = 'var(--accent)'; }
+        else { layer.addTo(map); btn.classList.add('secondary'); btn.style.background = ''; }
+        visible = !visible;
+      });
+    }
+
+    toggleLayer('togglePotential', layerPotential);
+    toggleLayer('toggleGradients', layerGradients);
+    toggleLayer('toggleKIP', layerKIP);
+  </script></body>
+</html>
