@@ -1,209 +1,96 @@
-<!doctype html>
-
-<html lang="ru">
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Карта рельефа с диаграммами (Excel → Leaflet)</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    :root { --bg:#0b0c10; --panel:#15171c; --text:#e6e6e6; --muted:#9aa0a6; --accent:#4f46e5; }
-    html, body { height:100%; margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
-    .app { display:grid; grid-template-columns: 380px 1fr; height:100%; }
-    .sidebar { background:var(--panel); padding:16px; overflow:auto; box-shadow: 4px 0 24px rgba(0,0,0,.3); }
-    .sidebar h1 { font-size:20px; margin:0 0 12px; }
-    .sidebar .hint { color:var(--muted); font-size:12px; margin-bottom:12px; }
-    .control { margin-bottom:14px; }
-    .control label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
-    input[type="file"], input[type="number"], select { width:100%; box-sizing:border-box; background:#0f1115; color:var(--text); border:1px solid #2a2f3a; border-radius:12px; padding:10px 12px; outline:none; }
-    .row { display:flex; gap:8px; }
-    button { background:#2b7dfa; border:none; color:white; padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600; }
-    button.secondary { background:#1f242d; color:#d9e2ff; border:1px solid #2a2f3a; }
-    #map { height:100%; }
-    .section { padding:10px; border:1px solid #2a2f3a; border-radius:14px; background:#0f1115; }
-    .footer { font-size:11px; color:var(--muted); margin-top:10px; }
-  </style>
+<meta charset="UTF-8">
+<title>3D Gas Pipeline Visualization with Excel</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<style>
+    html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    #cesiumContainer { width: 100%; height: 90%; }
+    #upload { width: 100%; height: 10%; padding: 10px; background: #f0f0f0; }
+</style>
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <h1>Excel → карта рельефа с диаграммами</h1>
-      <div class="hint">
-        Загрузите ваш Excel-файл. Приложение распознает столбцы: <b>Координаты</b>, 
-        <b>U вкл., В</b>, <b>U отк., В</b>, <b>Градиент (левый)</b>, 
-        <b>Градиент (правый)</b>, <b>Км по трассе МГ</b>, 
-        <b>Техническое состояние КИП</b>.
-      </div>
-      <div class="control section">
-        <label for="fileInput">Excel (.xlsx)</label>
-        <input id="fileInput" type="file" accept=".xlsx,.xls" />
-        <div class="row" style="margin-top:8px;">
-          <button id="loadBtn">Загрузить</button>
-          <button id="fitBtn" class="secondary">Подогнать карту</button>
-        </div>
-      </div>
 
-      <div class="control section">
-        <label>Слои и вид</label>
-        <div class="row">
-          <button id="togglePotential" class="secondary">Потенциалы</button>
-          <button id="toggleGradients" class="secondary">Градиенты</button>
-          <button id="toggleKIP" class="secondary">КИП</button>
-        </div>
-        <div class="row" style="margin-top:8px;">
-          <label style="flex:1;">Размер значков (px)<br/><input id="baseSize" type="number" value="40" min="12" max="128"/></label>
-          <label style="flex:1;">Масштаб по величине<br/><input id="scale" type="number" step="0.1" value="0.8"/></label>
-        </div>
-      </div>
+<input type="file" id="upload" />
+<div id="cesiumContainer"></div>
 
-      <div class="control section">
-        <label for="basemap">Подложка</label>
-        <select id="basemap">
-          <option value="opentopo">OpenTopoMap (рельеф)</option>
-          <option value="esri">Esri WorldTopoMap</option>
-          <option value="osm">OpenStreetMap</option>
-        </select>
-      </div>
-
-      <div class="footer">
-        Подсказка: линия газопровода строится по возрастанию поля «Км по трассе МГ». 
-        Если значения отсутствуют — по порядку строк.
-      </div>
-    </aside>
-    <main id="map"></main>
-  </div>
-
-  <!-- Библиотеки -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
-  <!-- Основной скрипт -->
-  <script>
-    /* === исправленный JavaScript === */
-    const map = L.map('map').setView([60.0, 70.0], 5);
-
-    const tileLayers = {
-      opentopo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {maxZoom:17, attribution:'&copy; OpenTopoMap & OpenStreetMap'}),
-      esri: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {maxZoom:19, attribution:'Tiles &copy; Esri'}),
-      osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'})
-    };
-    tileLayers.opentopo.addTo(map);
-
-    document.getElementById('basemap').addEventListener('change', e=>{
-      Object.values(tileLayers).forEach(t=>map.removeLayer(t));
-      (tileLayers[e.target.value]||tileLayers.opentopo).addTo(map);
+<script>
+    // Инициализация Cesium
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+        terrainProvider: Cesium.createWorldTerrain()
     });
 
-    const layerPotential = L.layerGroup().addTo(map);
-    const layerGradients = L.layerGroup().addTo(map);
-    const layerKIP = L.layerGroup().addTo(map);
-    const layerPipeline = L.layerGroup().addTo(map);
+    const fileInput = document.getElementById('upload');
 
-    function parseCoord(raw){
-      if(!raw) return null;
-      let s=String(raw).trim().replace(/,/g,'.');
-      const simple=s.match(/(-?\d+\.\d+)\D+(-?\d+\.\d+)/);
-      if(simple) return [parseFloat(simple[1]),parseFloat(simple[2])];
-      return null;
-    }
-    function numberOr(v){const n=Number(String(v).replace(',','.'));return isFinite(n)?n:null;}
-    function popupTable(obj){
-      return `<table style="border-collapse:collapse;width:100%;">${
-        Object.entries(obj).map(([k,v])=>`<tr><td>${k}</td><td style="text-align:right;font-weight:600;">${v??''}</td></tr>`).join('')
-      }</table>`;
-    }
-    function isKIPStatus(val){if(val==null)return false;const s=String(val).trim();return s&&s!=='-'&&s!=='нет';}
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
 
-    const defaultPalette=['#3366CC','#DC3912','#FF9900','#109618','#990099','#0099C6','#DD4477','#66AA00','#B82E2E','#316395'];
-    function makeDonutIcon(values,size){
-      const labels=Object.keys(values),data=labels.map(k=>Number(values[k])||0);
-      const canvas=document.createElement('canvas');const dpr=window.devicePixelRatio||1;
-      canvas.width=size*dpr;canvas.height=size*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
-      new Chart(ctx,{type:'doughnut',data:{labels,datasets:[{data,backgroundColor:labels.map((_,i)=>defaultPalette[i%defaultPalette.length])}]},options:{cutout:'55%',responsive:false,animation:false,plugins:{legend:{display:false},tooltip:{enabled:false}}}});
-      return L.icon({iconUrl:canvas.toDataURL(),iconSize:[size,size],iconAnchor:[size/2,size/2]});
-    }
-    function makeBarIcon(values,size){
-      const labels=Object.keys(values),data=labels.map(k=>Number(values[k])||0);
-      const canvas=document.createElement('canvas');const dpr=window.devicePixelRatio||1;
-      canvas.width=size*dpr;canvas.height=size*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
-      new Chart(ctx,{type:'bar',data:{labels,datasets:[{data,backgroundColor:labels.map((_,i)=>defaultPalette[i%defaultPalette.length])}]},options:{indexAxis:'y',responsive:false,animation:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}});
-      return L.icon({iconUrl:canvas.toDataURL(),iconSize:[size,size],iconAnchor:[size/2,size/2]});
-    }
-    function scaledSize(base,scale,mag){return Math.max(18,Math.round(base+scale*Math.sqrt(Math.abs(mag)||0)));}
+        reader.onload = (evt) => {
+            const data = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-    async function readExcel(file){
-      const data=await file.arrayBuffer();
-      const wb=XLSX.read(data,{type:'array'});
-      const sheet=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(sheet,{defval:null,raw:false});
-      return rows.map(r=>({
-        lat:parseCoord(r['Координаты'])?.[0],
-        lon:parseCoord(r['Координаты'])?.[1],
-        km:numberOr(r['Км по трассе МГ']),
-        u_on:numberOr(r['U вкл., В']),
-        u_off:numberOr(r['U отк., В']),
-        gl_on:numberOr(r['Градиент (левый)']),
-        gr_on:numberOr(r['Градиент (правый)']),
-        kip:r['Техническое состояние КИП']
-      })).filter(p=>p.lat&&p.lon);
-    }
+            plotPipeline(jsonData);
+        };
 
-    function renderAll(points){
-      layerPotential.clearLayers();layerGradients.clearLayers();layerKIP.clearLayers();layerPipeline.clearLayers();
-      if(!points.length){alert('Нет валидных точек');return;}
-      const latlngs=points.map(p=>[p.lat,p.lon]);
-      L.polyline(latlngs,{color:'#66AA00',weight:3}).addTo(layerPipeline);
-      const base=+document.getElementById('baseSize').value||40;
-      const scale=+document.getElementById('scale').value||0.8;
-      points.forEach(p=>{
-        if(p.u_on||p.u_off){
-          const icon=makeDonutIcon({'U вкл, В':p.u_on||0,'U отк, В':p.u_off||0},scaledSize(base,scale,p.u_on||p.u_off));
-          L.marker([p.lat,p.lon],{icon}).addTo(layerPotential)
-            .bindPopup(`<b>Потенциал</b><br/>Км:${p.km??''}<br/>${popupTable({'U вкл, В':p.u_on,'U отк, В':p.u_off})}`);
-        }
-        if(p.gl_on||p.gr_on){
-          const icon=makeBarIcon({'Левый, mB':p.gl_on||0,'Правый, mB':p.gr_on||0},scaledSize(base,scale,(p.gl_on||0)+(p.gr_on||0)));
-          L.marker([p.lat,p.lon],{icon}).addTo(layerGradients)
-            .bindPopup(`<b>Градиенты</b><br/>Км:${p.km??''}<br/>${popupTable({'Левый':p.gl_on,'Правый':p.gr_on})}`);
-        }
-        if(isKIPStatus(p.kip)){
-          const kipIcon=L.divIcon({html:'<div style="background:#DC3912;color:#fff;padding:4px 6px;border-radius:8px;font-weight:700;">КИП</div>'});
-          L.marker([p.lat,p.lon],{icon:kipIcon}).addTo(layerKIP)
-            .bindPopup(`<b>КИП</b><br/>Км:${p.km??''}<br/>Состояние:${p.kip}`);
-        }
-      });
-      map.fitBounds(latlngs);
-    }
-
-    document.getElementById('loadBtn').addEventListener('click',async()=>{
-      const file=document.getElementById('fileInput').files[0];
-      if(!file){alert('Выберите файл');return;}
-      const pts=await readExcel(file);renderAll(pts);
+        reader.readAsArrayBuffer(file);
     });
 
-    document.getElementById('fitBtn').addEventListener('click',()=>{
-      const layers=[];[layerPotential,layerGradients,layerKIP,layerPipeline].forEach(g=>g.eachLayer(l=>{
-        if(l.getLatLng)layers.push(l.getLatLng());
-        if(l.getLatLngs)layers.push(...l.getLatLngs());
-      }));
-      if(layers.length)map.fitBounds(L.latLngBounds(layers));
-    });
+    function plotPipeline(pipelineData) {
+        viewer.entities.removeAll();
 
-    function toggleLayer(btnId,layer){
-      const btn=document.getElementById(btnId);let vis=true;
-      btn.addEventListener('click',()=>{
-        if(vis){map.removeLayer(layer);btn.classList.remove('secondary');btn.style.background='var(--accent)';}
-        else{layer.addTo(map);btn.classList.add('secondary');btn.style.background='';}
-        vis=!vis;
-      });
+        // Находим min и max для нормализации
+        const minGradient = Math.min(...pipelineData.map(p => p.Gradient));
+        const maxGradient = Math.max(...pipelineData.map(p => p.Gradient));
+        const minPotential = Math.min(...pipelineData.map(p => p.Potential));
+        const maxPotential = Math.max(...pipelineData.map(p => p.Potential));
+
+        function getColor(gradient) {
+            const t = (gradient - minGradient) / (maxGradient - minGradient);
+            return Cesium.Color.BLUE.lerp(Cesium.Color.RED, t, new Cesium.Color());
+        }
+
+        // Линия газопровода
+        const positions = pipelineData.map(p => Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, 0));
+        viewer.entities.add({
+            name: "Gas Pipeline",
+            polyline: { positions: positions, width: 5, material: Cesium.Color.YELLOW }
+        });
+
+        // Цилиндры и подписи
+        pipelineData.forEach(p => {
+            const height = 20 + 80 * (p.Potential - minPotential) / (maxPotential - minPotential);
+            viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, 0),
+                cylinder: { length: height, topRadius: 5, bottomRadius: 5, material: getColor(p.Gradient) }
+            });
+
+            viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(p.Longitude, p.Latitude, height + 5),
+                label: {
+                    text: p.Potential.toString(),
+                    font: '16px sans-serif',
+                    fillColor: Cesium.Color.WHITE,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2,
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM
+                }
+            });
+        });
+
+        viewer.zoomTo(viewer.entities);
     }
-    toggleLayer('togglePotential',layerPotential);
-    toggleLayer('toggleGradients',layerGradients);
-    toggleLayer('toggleKIP',layerKIP);
-  </script>
+</script>
 </body>
 </html>
+
 
 
 
